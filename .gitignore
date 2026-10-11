@@ -16,3 +16,25 @@ radar-webui/node_modules/@esbuild/win32-x64/esbuild.exe
 radar-webui/node_modules/@lucide/vue/dist/cjs/lucide-vue.js.map
 radar-webui/node_modules/typescript/lib/_tsc.js
 radar-webui/node_modules/typescript/lib/typescript.js
+
+# hygiene
+node_modules/
+dist/
+build/
+bin/
+obj/
+.venv/
+__pycache__/
+*.log
+logs/
+.env
+.env.*
+*.tsbuildinfo
+.cache/
+coverage/
+*.zip
+*.7z
+graphify-out/
+.gitnexus/
+!.env.example
+/.cursor/skills/caveman-setup/SKILL.md
