@@ -1,9 +1,0 @@
-stack_name: radar
-image_tag: radar-api:latest
-compose_file: ../../docker-compose.yml
-dockerfile: ../../dockerfile
-docker_network: radar-api-net
-internal_port: "8088"
-publish_port: "8088"
-delete_volume: "no"  # update: keep volumes
-delete_image: "yes"

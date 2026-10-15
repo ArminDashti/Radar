@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Server) ListProbes(c *gin.Context) {
-	rows, err := s.Pool.Query(requestContext(c), `
+	rows, err := s.DB.QueryContext(requestContext(c), `
 		SELECT p.id, p.code, p.name, p.flag_icon, p.created_at,
 			COALESCE((
 				SELECT a.public_ip
@@ -59,20 +59,20 @@ func (s *Server) UpdateProbe(c *gin.Context) {
 	}
 
 	var probe models.Probe
-	err = s.Pool.QueryRow(requestContext(c), `
-		UPDATE probes SET name = $2 WHERE id = $1
+	err = s.DB.QueryRowContext(requestContext(c), `
+		UPDATE probes SET name = ? WHERE id = ?
 		RETURNING id, code, name, flag_icon, created_at`,
-		id, input.Name,
+		input.Name, id,
 	).Scan(&probe.ID, &probe.Code, &probe.Name, &probe.FlagIcon, &probe.CreatedAt)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "probe not found"})
 		return
 	}
-	_ = s.Pool.QueryRow(requestContext(c), `
+	_ = s.DB.QueryRowContext(requestContext(c), `
 		SELECT COALESCE((
 			SELECT a.public_ip
 			FROM agents a
-			WHERE a.probe_id = $1 AND a.public_ip <> ''
+			WHERE a.probe_id = ? AND a.public_ip <> ''
 			ORDER BY a.last_seen_at DESC NULLS LAST
 			LIMIT 1
 		), '')`, id).Scan(&probe.PublicIP)

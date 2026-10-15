@@ -16,28 +16,25 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
+	cfg := config.Load()
 
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	database, err := db.Connect(ctx, cfg.DatabasePath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer pool.Close()
-	if err := db.RunMigration(ctx, pool, "migrations/001_init.sql"); err != nil {
+	defer database.Close()
+	if err := db.RunMigration(ctx, database, "migrations/001_init.sql"); err != nil {
 		log.Fatal(err)
 	}
-	if err := db.RunMigration(ctx, pool, "migrations/002_accounts.sql"); err != nil {
+	if err := db.RunMigration(ctx, database, "migrations/002_accounts.sql"); err != nil {
 		log.Fatal(err)
 	}
-	if err := db.Seed(ctx, pool); err != nil {
+	if err := db.Seed(ctx, database); err != nil {
 		log.Fatal(err)
 	}
 
-	server := &handlers.Server{Pool: pool, JWTSecret: cfg.JWTSecret, LogoDir: cfg.LogoDir}
+	server := &handlers.Server{DB: database, JWTSecret: cfg.JWTSecret, LogoDir: cfg.LogoDir}
 	router := gin.New()
 	// Trust private/loopback proxies so ClientIP uses X-Forwarded-For behind HAProxy.
 	_ = router.SetTrustedProxies([]string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1"})

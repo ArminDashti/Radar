@@ -1,27 +1,27 @@
 package handlers
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 )
 
 type hostRequestRow struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Username    string     `json:"username"`
-	Name        string     `json:"name"`
-	Host        string     `json:"host"`
-	HTTPEnabled bool       `json:"http_enabled"`
-	ICMPEnabled bool       `json:"icmp_enabled"`
-	Status      string     `json:"status"`
-	ReviewerNote string    `json:"reviewer_note"`
-	CreatedAt   time.Time  `json:"created_at"`
-	ReviewedAt  *time.Time `json:"reviewed_at"`
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"user_id"`
+	Username     string     `json:"username"`
+	Name         string     `json:"name"`
+	Host         string     `json:"host"`
+	HTTPEnabled  bool       `json:"http_enabled"`
+	ICMPEnabled  bool       `json:"icmp_enabled"`
+	Status       string     `json:"status"`
+	ReviewerNote string     `json:"reviewer_note"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ReviewedAt   *time.Time `json:"reviewed_at"`
 }
 
 func (s *Server) CreateHostRequest(c *gin.Context) {
@@ -58,9 +58,9 @@ func (s *Server) CreateHostRequest(c *gin.Context) {
 		return
 	}
 	var row hostRequestRow
-	err := s.Pool.QueryRow(requestContext(c), `
+	err := s.DB.QueryRowContext(requestContext(c), `
 		INSERT INTO host_requests (user_id, name, host, http_enabled, icmp_enabled)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES (?, ?, ?, ?, ?)
 		RETURNING id, user_id, name, host, http_enabled, icmp_enabled, status, reviewer_note, created_at, reviewed_at`,
 		userID, name, host, httpEnabled, icmpEnabled,
 	).Scan(
@@ -87,11 +87,11 @@ func (s *Server) ListHostRequests(c *gin.Context) {
 	where := []string{}
 	if role != "admin" {
 		args = append(args, userID)
-		where = append(where, "r.user_id = $1")
+		where = append(where, "r.user_id = ?")
 	}
 	if status != "" {
 		args = append(args, status)
-		where = append(where, "r.status = $"+strconv.Itoa(len(args)))
+		where = append(where, "r.status = ?")
 	}
 	query := `
 		SELECT r.id, r.user_id, u.username, r.name, r.host, r.http_enabled, r.icmp_enabled,
@@ -102,7 +102,7 @@ func (s *Server) ListHostRequests(c *gin.Context) {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY r.created_at DESC"
-	rows, err := s.Pool.Query(requestContext(c), query, args...)
+	rows, err := s.DB.QueryContext(requestContext(c), query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list host requests"})
 		return
@@ -134,20 +134,20 @@ func (s *Server) ApproveHostRequest(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&note)
 
-	tx, err := s.Pool.Begin(requestContext(c))
+	tx, err := s.DB.BeginTx(requestContext(c), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not start transaction"})
 		return
 	}
-	defer tx.Rollback(requestContext(c))
+	defer tx.Rollback()
 
 	var req hostRequestRow
-	err = tx.QueryRow(requestContext(c), `
+	err = tx.QueryRowContext(requestContext(c), `
 		SELECT id, user_id, name, host, http_enabled, icmp_enabled, status
-		FROM host_requests WHERE id = $1 FOR UPDATE`, id,
+		FROM host_requests WHERE id = ?`, id,
 	).Scan(&req.ID, &req.UserID, &req.Name, &req.Host, &req.HTTPEnabled, &req.ICMPEnabled, &req.Status)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "host request not found"})
 			return
 		}
@@ -160,9 +160,9 @@ func (s *Server) ApproveHostRequest(c *gin.Context) {
 	}
 
 	var endpointID int64
-	err = tx.QueryRow(requestContext(c), `
+	err = tx.QueryRowContext(requestContext(c), `
 		INSERT INTO endpoints (name, host, http_enabled, icmp_enabled, active)
-		VALUES ($1, $2, $3, $4, true)
+		VALUES (?, ?, ?, ?, true)
 		RETURNING id`,
 		req.Name, req.Host, req.HTTPEnabled, req.ICMPEnabled,
 	).Scan(&endpointID)
@@ -172,18 +172,18 @@ func (s *Server) ApproveHostRequest(c *gin.Context) {
 	}
 
 	var reviewedAt time.Time
-	err = tx.QueryRow(requestContext(c), `
+	err = tx.QueryRowContext(requestContext(c), `
 		UPDATE host_requests
-		SET status = 'approved', reviewer_note = $2, reviewed_at = now()
-		WHERE id = $1
+		SET status = 'approved', reviewer_note = ?, reviewed_at = ?
+		WHERE id = ?
 		RETURNING reviewed_at`,
-		id, strings.TrimSpace(note.ReviewerNote),
+		strings.TrimSpace(note.ReviewerNote), time.Now().UTC(), id,
 	).Scan(&reviewedAt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not approve host request"})
 		return
 	}
-	if err := tx.Commit(requestContext(c)); err != nil {
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not commit approval"})
 		return
 	}
@@ -206,19 +206,24 @@ func (s *Server) RejectHostRequest(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&note)
 
-	tag, err := s.Pool.Exec(requestContext(c), `
+	result, err := s.DB.ExecContext(requestContext(c), `
 		UPDATE host_requests
-		SET status = 'rejected', reviewer_note = $2, reviewed_at = now()
-		WHERE id = $1 AND status = 'pending'`,
-		id, strings.TrimSpace(note.ReviewerNote),
+		SET status = 'rejected', reviewer_note = ?, reviewed_at = ?
+		WHERE id = ? AND status = 'pending'`,
+		strings.TrimSpace(note.ReviewerNote), time.Now().UTC(), id,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not reject host request"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not reject host request"})
+		return
+	}
+	if affected == 0 {
 		var exists bool
-		_ = s.Pool.QueryRow(requestContext(c), `SELECT EXISTS(SELECT 1 FROM host_requests WHERE id = $1)`, id).Scan(&exists)
+		_ = s.DB.QueryRowContext(requestContext(c), `SELECT EXISTS(SELECT 1 FROM host_requests WHERE id = ?)`, id).Scan(&exists)
 		if !exists {
 			c.JSON(http.StatusNotFound, gin.H{"error": "host request not found"})
 			return

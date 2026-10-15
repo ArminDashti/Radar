@@ -1,10 +1,12 @@
 # Radar API
 
-Gin and PostgreSQL backend for the Radar latency hub. It accepts HTTP/ICMP latency samples from authenticated agents and serves hierarchical minute, hour, day, and month grids to the WebUI.
+Gin and SQLite backend for the Radar latency hub. It accepts HTTP/ICMP latency samples from authenticated agents and serves hierarchical minute, hour, day, and month grids to the WebUI.
 
 ## Run locally
 
 Requirements: Go 1.22+, Docker, and Docker Compose.
+
+The Compose stack is named `radar` (`name: radar` in `docker-compose.yml`). It runs the `radar-api` container alongside `radar-webui` in the same stack.
 
 ```powershell
 Copy-Item .env.example .env
@@ -12,7 +14,7 @@ docker compose up -d
 go run ./cmd/server
 ```
 
-Postgres is published on host port **5436** (`DATABASE_URL` in `.env.example`). The server runs at `http://localhost:8088`. Startup applies `migrations/001_init.sql`, creates the demo credentials, and inserts two hours of sample history. Seeding is idempotent. The seed probe is **Irancell** (`probe1`). Seeded sites: Google, GitHub, 1.1.1.1, 8.8.8.8, YouTube, ChatGPT, Claude, DeepSeek, Microsoft, Apple, Play Store, App Store, Docker, Spotify, Grok, Arena.ai, Ondpline.com, GitLab, digikala.ir, snapp.ir, tapsi.ir, divar.ir, bale.ai, Devin AI, Neshan.org, Wikipedia, WhatsApp, zoomit.ir, digiato.ir, Let's Encrypt, Steam, torob.ir, PlayStation, Xbox, Gmail, Figma, Windows Update, Bing, aparat.ir, PyPI, npm, WordPress, Go modules, crates.io, VS Code, NuGet, Instagram, and Telegram. Named hosts enable HTTP; the two IP addresses enable ICMP.
+The database is a SQLite file at `DATABASE_PATH` (`./radar.db` in `.env.example`; `/data/radar.db` in Docker). The server runs at `http://localhost:8088`. Startup applies `migrations/001_init.sql`, creates the demo credentials, and inserts two hours of sample history. Seeding is idempotent. The seed probe is **Irancell** (`probe1`). Seeded sites: Google, GitHub, 1.1.1.1, 8.8.8.8, YouTube, ChatGPT, Claude, DeepSeek, Microsoft, Apple, Play Store, App Store, Docker, Spotify, Grok, Arena.ai, Ondpline.com, GitLab, digikala.ir, snapp.ir, tapsi.ir, divar.ir, bale.ai, Devin AI, Neshan.org, Wikipedia, WhatsApp, zoomit.ir, digiato.ir, Let's Encrypt, Steam, torob.ir, PlayStation, Xbox, Gmail, Figma, Windows Update, Bing, aparat.ir, PyPI, npm, WordPress, Go modules, crates.io, VS Code, NuGet, Instagram, and Telegram. Named hosts enable HTTP; the two IP addresses enable ICMP.
 
 WebUI login:
 
@@ -25,7 +27,7 @@ Demo agent bearer token:
 radar-demo-agent-token-probe1
 ```
 
-Only the SHA-256 token hash is stored in PostgreSQL. Replace all demo credentials and `JWT_SECRET` outside local development.
+Only the SHA-256 token hash is stored in SQLite. Replace all demo credentials and `JWT_SECRET` outside local development.
 
 ## API
 

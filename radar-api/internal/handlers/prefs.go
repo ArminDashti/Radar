@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"database/sql"
+	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/ArminDashti/radar-api/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) GetHostPrefs(c *gin.Context) {
@@ -12,15 +15,20 @@ func (s *Server) GetHostPrefs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var hostIDs []int64
-	err := s.Pool.QueryRow(requestContext(c),
-		`SELECT host_ids FROM user_host_prefs WHERE user_id = $1`, userID,
-	).Scan(&hostIDs)
+	var raw string
+	err := s.DB.QueryRowContext(requestContext(c),
+		`SELECT host_ids FROM user_host_prefs WHERE user_id = ?`, userID,
+	).Scan(&raw)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if err == sql.ErrNoRows {
 			c.JSON(http.StatusOK, gin.H{"host_ids": []int64{}})
 			return
 		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load host prefs"})
+		return
+	}
+	var hostIDs []int64
+	if err := json.Unmarshal([]byte(raw), &hostIDs); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load host prefs"})
 		return
 	}
@@ -46,9 +54,10 @@ func (s *Server) PutHostPrefs(c *gin.Context) {
 		input.HostIDs = []int64{}
 	}
 	if len(input.HostIDs) > 0 {
+		marks, args := db.InClause(input.HostIDs)
 		var count int
-		if err := s.Pool.QueryRow(requestContext(c),
-			`SELECT COUNT(*) FROM endpoints WHERE id = ANY($1)`, input.HostIDs,
+		if err := s.DB.QueryRowContext(requestContext(c),
+			`SELECT COUNT(*) FROM endpoints WHERE id IN (`+marks+`)`, args...,
 		).Scan(&count); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not validate host ids"})
 			return
@@ -60,11 +69,16 @@ func (s *Server) PutHostPrefs(c *gin.Context) {
 		}
 		input.HostIDs = unique
 	}
-	if _, err := s.Pool.Exec(requestContext(c), `
+	hostIDsJSON, err := json.Marshal(input.HostIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save host prefs"})
+		return
+	}
+	if _, err := s.DB.ExecContext(requestContext(c), `
 		INSERT INTO user_host_prefs (user_id, host_ids, updated_at)
-		VALUES ($1, $2, now())
-		ON CONFLICT (user_id) DO UPDATE SET host_ids = EXCLUDED.host_ids, updated_at = now()`,
-		userID, input.HostIDs,
+		VALUES (?, ?, ?)
+		ON CONFLICT (user_id) DO UPDATE SET host_ids = excluded.host_ids, updated_at = excluded.updated_at`,
+		userID, string(hostIDsJSON), time.Now().UTC(),
 	); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save host prefs"})
 		return

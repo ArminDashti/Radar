@@ -1,31 +1,26 @@
 package config
 
 import (
-	"errors"
 	"os"
 	"strings"
 )
 
 type Config struct {
-	DatabaseURL string
-	JWTSecret   string
-	Port        string
-	CORSOrigins []string
-	LogoDir     string
+	DatabasePath string
+	JWTSecret    string
+	Port         string
+	CORSOrigins  []string
+	LogoDir      string
 }
 
-func Load() (Config, error) {
-	cfg := Config{
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		JWTSecret:   envOrDefault("JWT_SECRET", "change-me-radar-jwt"),
-		Port:        envOrDefault("PORT", "8088"),
-		CORSOrigins: splitOrigins(envOrDefault("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
-		LogoDir:     envOrDefault("LOGO_DIR", "/data/logos"),
+func Load() Config {
+	return Config{
+		DatabasePath: envOrDefault("DATABASE_PATH", "/data/radar.db"),
+		JWTSecret:    envOrDefault("JWT_SECRET", "change-me-radar-jwt"),
+		Port:         envOrDefault("PORT", "8088"),
+		CORSOrigins:  splitOrigins(envOrDefault("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
+		LogoDir:      envOrDefault("LOGO_DIR", "/data/logos"),
 	}
-	if cfg.DatabaseURL == "" {
-		return Config{}, errors.New("DATABASE_URL is required")
-	}
-	return cfg, nil
 }
 
 func envOrDefault(name, fallback string) string {

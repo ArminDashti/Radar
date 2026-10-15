@@ -31,7 +31,7 @@ func (s *Server) UploadHostLogo(c *gin.Context) {
 	}
 
 	var exists bool
-	if err := s.Pool.QueryRow(requestContext(c), `SELECT EXISTS(SELECT 1 FROM endpoints WHERE id = $1)`, id).Scan(&exists); err != nil || !exists {
+	if err := s.DB.QueryRowContext(requestContext(c), `SELECT EXISTS(SELECT 1 FROM endpoints WHERE id = ?)`, id).Scan(&exists); err != nil || !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "host not found"})
 		return
 	}
@@ -90,8 +90,8 @@ func (s *Server) UploadHostLogo(c *gin.Context) {
 
 	logoPath := "/api/logos/" + filename
 	var host models.Endpoint
-	err = s.Pool.QueryRow(requestContext(c), `
-		UPDATE endpoints SET logo_icon = $1 WHERE id = $2
+	err = s.DB.QueryRowContext(requestContext(c), `
+		UPDATE endpoints SET logo_icon = ? WHERE id = ?
 		RETURNING id, name, host, http_enabled, icmp_enabled, probe_id, active, COALESCE(logo_icon, ''), created_at`,
 		logoPath, id,
 	).Scan(&host.ID, &host.Name, &host.Host, &host.HTTPEnabled, &host.ICMPEnabled, &host.ProbeID, &host.Active, &host.LogoIcon, &host.CreatedAt)

@@ -16,11 +16,11 @@ internal/handlers/probes.go        # Handles probe listing
 internal/models/models.go          # Shared request and response models
 internal/rollup/rollup.go          # Defines intervals and time buckets
 internal/rollup/rollup_test.go     # Tests interval and bucket behavior
-migrations/001_init.sql            # Creates and seeds PostgreSQL schema
+migrations/001_init.sql            # Creates and seeds SQLite schema
 docs/                              # Project reference documentation
 .env.example                       # Local environment template
 .gitignore                         # Excludes local and generated files
-docker-compose.yml                 # Runs PostgreSQL 16 locally
+docker-compose.yml                 # Runs the API with a SQLite volume
 go.mod                             # Go module and direct dependencies
 go.sum                             # Dependency checksums
 README.md                          # Setup, credentials, and API guide

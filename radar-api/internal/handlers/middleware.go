@@ -2,12 +2,12 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"strings"
 
 	radarauth "github.com/ArminDashti/radar-api/internal/auth"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 )
 
 type Server struct {
-	Pool      *pgxpool.Pool
+	DB        *sql.DB
 	JWTSecret string
 	LogoDir   string
 }
@@ -64,8 +64,8 @@ func (s *Server) AgentAuth() gin.HandlerFunc {
 		hash := radarauth.HashAgentToken(token)
 		var storedHash string
 		var agentID, probeID int64
-		err := s.Pool.QueryRow(c.Request.Context(),
-			`SELECT id, probe_id, token_hash FROM agents WHERE token_hash = $1`, hash,
+		err := s.DB.QueryRowContext(c.Request.Context(),
+			`SELECT id, probe_id, token_hash FROM agents WHERE token_hash = ?`, hash,
 		).Scan(&agentID, &probeID, &storedHash)
 		if err != nil || !radarauth.EqualTokenHash(storedHash, hash) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid agent token"})

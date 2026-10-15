@@ -33,9 +33,9 @@ func (s *Server) TestHost(c *gin.Context) {
 
 	var name, host string
 	var httpEnabled, icmpEnabled bool
-	err = s.Pool.QueryRow(requestContext(c), `
+	err = s.DB.QueryRowContext(requestContext(c), `
 		SELECT name, host, http_enabled, icmp_enabled
-		FROM endpoints WHERE id = $1`, id,
+		FROM endpoints WHERE id = ?`, id,
 	).Scan(&name, &host, &httpEnabled, &icmpEnabled)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "host not found"})

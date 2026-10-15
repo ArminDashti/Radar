@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) AgentTargets(c *gin.Context) {
-	rows, err := s.Pool.Query(requestContext(c), `
+	rows, err := s.DB.QueryContext(requestContext(c), `
 		SELECT id, name, host, http_enabled, icmp_enabled
 		FROM endpoints WHERE active ORDER BY lower(name), id`)
 	if err != nil {
@@ -46,12 +46,12 @@ func (s *Server) AgentSamples(c *gin.Context) {
 		return
 	}
 	agentID := c.GetInt64(agentIDKey)
-	tx, err := s.Pool.Begin(requestContext(c))
+	tx, err := s.DB.BeginTx(requestContext(c), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not begin sample batch"})
 		return
 	}
-	defer tx.Rollback(requestContext(c))
+	defer tx.Rollback()
 
 	accepted := 0
 	skipped := 0
@@ -60,37 +60,43 @@ func (s *Server) AgentSamples(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "protocol must be http or icmp"})
 			return
 		}
-		observedAt := sample.ObservedAt.UTC().Truncate(time.Minute)
+		observedAt := sample.ObservedAt.UTC().Truncate(time.Minute).Unix()
 		if !sample.OK {
 			sample.LatencyMS = nil
 		}
-		result, err := tx.Exec(requestContext(c), `
+		result, err := tx.ExecContext(requestContext(c), `
 			INSERT INTO samples (agent_id, endpoint_id, protocol, observed_at, latency_ms, ok)
-			SELECT $1, e.id, $2, $3, $4, $5
+			SELECT ?, e.id, ?, ?, ?, ?
 			FROM endpoints e
-			WHERE e.id = $6 AND e.active
-			  AND (($2 = 'http' AND e.http_enabled) OR ($2 = 'icmp' AND e.icmp_enabled))
+			WHERE e.id = ? AND e.active
+			  AND ((? = 'http' AND e.http_enabled) OR (? = 'icmp' AND e.icmp_enabled))
 			ON CONFLICT (agent_id, endpoint_id, protocol, observed_at)
-			DO UPDATE SET latency_ms = EXCLUDED.latency_ms, ok = EXCLUDED.ok`,
-			agentID, sample.Protocol, observedAt, sample.LatencyMS, sample.OK, sample.EndpointID)
+			DO UPDATE SET latency_ms = excluded.latency_ms, ok = excluded.ok`,
+			agentID, sample.Protocol, observedAt, sample.LatencyMS, sample.OK,
+			sample.EndpointID, sample.Protocol, sample.Protocol)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "could not store sample"})
 			return
 		}
-		if result.RowsAffected() == 0 {
+		affected, err := result.RowsAffected()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not store sample"})
+			return
+		}
+		if affected == 0 {
 			// Host deleted/deactivated or protocol disabled mid-cycle — keep the rest of the batch.
 			skipped++
 			continue
 		}
 		accepted++
 	}
-	if _, err := tx.Exec(requestContext(c),
-		`UPDATE agents SET last_seen_at = now(), public_ip = $2 WHERE id = $1`,
-		agentID, c.ClientIP()); err != nil {
+	if _, err := tx.ExecContext(requestContext(c),
+		`UPDATE agents SET last_seen_at = ?, public_ip = ? WHERE id = ?`,
+		time.Now().UTC(), c.ClientIP(), agentID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update agent"})
 		return
 	}
-	if err := tx.Commit(requestContext(c)); err != nil {
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not commit sample batch"})
 		return
 	}

@@ -41,7 +41,7 @@ func scanHost(row interface {
 }
 
 func (s *Server) ListHosts(c *gin.Context) {
-	rows, err := s.Pool.Query(requestContext(c), `
+	rows, err := s.DB.QueryContext(requestContext(c), `
 		SELECT id, name, host, http_enabled, icmp_enabled, probe_id, active, COALESCE(logo_icon, ''), created_at
 		FROM endpoints ORDER BY lower(name), id`)
 	if err != nil {
@@ -67,13 +67,12 @@ func (s *Server) CreateHost(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var host models.Endpoint
-	err := s.Pool.QueryRow(requestContext(c), `
+	host, err := scanHost(s.DB.QueryRowContext(requestContext(c), `
 		INSERT INTO endpoints (name, host, http_enabled, icmp_enabled, probe_id, active)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES (?, ?, ?, ?, ?, ?)
 		RETURNING id, name, host, http_enabled, icmp_enabled, probe_id, active, COALESCE(logo_icon, ''), created_at`,
 		input.Name, input.Host, input.HTTPEnabled, input.ICMPEnabled, input.ProbeID, input.Active,
-	).Scan(&host.ID, &host.Name, &host.Host, &host.HTTPEnabled, &host.ICMPEnabled, &host.ProbeID, &host.Active, &host.LogoIcon, &host.CreatedAt)
+	))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "could not create host"})
 		return
@@ -91,14 +90,13 @@ func (s *Server) UpdateHost(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var host models.Endpoint
-	err = s.Pool.QueryRow(requestContext(c), `
+	host, err := scanHost(s.DB.QueryRowContext(requestContext(c), `
 		UPDATE endpoints
-		SET name = $1, host = $2, http_enabled = $3, icmp_enabled = $4, probe_id = $5, active = $6
-		WHERE id = $7
+		SET name = ?, host = ?, http_enabled = ?, icmp_enabled = ?, probe_id = ?, active = ?
+		WHERE id = ?
 		RETURNING id, name, host, http_enabled, icmp_enabled, probe_id, active, COALESCE(logo_icon, ''), created_at`,
 		input.Name, input.Host, input.HTTPEnabled, input.ICMPEnabled, input.ProbeID, input.Active, id,
-	).Scan(&host.ID, &host.Name, &host.Host, &host.HTTPEnabled, &host.ICMPEnabled, &host.ProbeID, &host.Active, &host.LogoIcon, &host.CreatedAt)
+	))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "host not found"})
 		return
@@ -112,12 +110,17 @@ func (s *Server) DeleteHost(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid host id"})
 		return
 	}
-	tag, err := s.Pool.Exec(requestContext(c), `DELETE FROM endpoints WHERE id = $1`, id)
+	result, err := s.DB.ExecContext(requestContext(c), `DELETE FROM endpoints WHERE id = ?`, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete host"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete host"})
+		return
+	}
+	if affected == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "host not found"})
 		return
 	}

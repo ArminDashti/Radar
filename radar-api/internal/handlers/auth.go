@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"regexp"
@@ -8,9 +9,8 @@ import (
 	"unicode/utf8"
 
 	radarauth "github.com/ArminDashti/radar-api/internal/auth"
+	"github.com/ArminDashti/radar-api/internal/db"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -26,8 +26,8 @@ func (s *Server) Login(c *gin.Context) {
 		return
 	}
 	var passwordHash, role string
-	if err := s.Pool.QueryRow(requestContext(c),
-		`SELECT password_hash, role FROM users WHERE username = $1`, input.Username,
+	if err := s.DB.QueryRowContext(requestContext(c),
+		`SELECT password_hash, role FROM users WHERE username = ?`, input.Username,
 	).Scan(&passwordHash, &role); err != nil ||
 		bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(input.Password)) != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
@@ -65,13 +65,12 @@ func (s *Server) Signup(c *gin.Context) {
 		return
 	}
 	const role = "user"
-	_, err = s.Pool.Exec(requestContext(c),
-		`INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)`,
+	_, err = s.DB.ExecContext(requestContext(c),
+		`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`,
 		username, string(passwordHash), role,
 	)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		if db.IsUniqueViolation(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
 			return
 		}
@@ -94,10 +93,10 @@ func (s *Server) lookupUserID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	var userID int64
-	if err := s.Pool.QueryRow(requestContext(c),
-		`SELECT id FROM users WHERE username = $1`, name,
+	if err := s.DB.QueryRowContext(requestContext(c),
+		`SELECT id FROM users WHERE username = ?`, name,
 	).Scan(&userID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 			return 0, false
 		}

@@ -1,31 +1,13 @@
-# Local Docker hot-reload: Postgres + Go Air API + Go Air agent + Vite WebUI (bind mounts).
+# Local Docker hot-reload: SQLite + Go Air API + Go Air agent + Vite WebUI (bind mounts).
 # Usage: docker compose -f docker-compose.local.yml -p radar up -d --force-recreate
 name: radar
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: "no"
-    environment:
-      POSTGRES_USER: radar
-      POSTGRES_PASSWORD: radar
-      POSTGRES_DB: radar
-      POSTGRES_HOST_AUTH_METHOD: trust
-    ports:
-      - "5443:5432"
-    volumes:
-      - radar-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   api:
-    image: golang:1.23-alpine
+    image: golang:1.26-alpine
     restart: "no"
     working_dir: /app
     environment:
-      DATABASE_URL: postgres://radar:radar@postgres:5432/radar?sslmode=disable
+      DATABASE_PATH: /data/radar.db
       JWT_SECRET: change-me-radar-jwt
       PORT: "8088"
       LOGO_DIR: /data/logos
@@ -40,12 +22,9 @@ services:
       - .:/app
       - radar-gomod:/go/pkg/mod
       - radar-gotmp:/app/tmp
-      - radar-logos-data:/data/logos
+      - radar-sqlite-data:/data
     ports:
       - "8088:8088"
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   agent:
     image: golang:1.24-alpine
@@ -96,7 +75,7 @@ services:
       - api
 
 volumes:
-  radar-postgres-data:
+  radar-sqlite-data:
   radar-gomod:
   radar-gotmp:
   radar-agent-gomod:

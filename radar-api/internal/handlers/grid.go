@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArminDashti/radar-api/internal/db"
 	"github.com/ArminDashti/radar-api/internal/models"
 	"github.com/ArminDashti/radar-api/internal/rollup"
 	"github.com/gin-gonic/gin"
@@ -14,7 +15,7 @@ import (
 
 type aggregate struct {
 	RowID     int64
-	Bucket    time.Time
+	Bucket    int64 // unix seconds, UTC
 	LatencyMS *float64
 	OK        bool
 }
@@ -96,9 +97,10 @@ func (s *Server) parseProbeFilter(c *gin.Context) (all bool, codes []string, ok 
 	if len(codes) == 0 {
 		return false, []string{}, true
 	}
+	marks, args := db.InClause(codes)
 	var count int
-	if err := s.Pool.QueryRow(requestContext(c),
-		`SELECT COUNT(*) FROM probes WHERE code = ANY($1)`, codes).Scan(&count); err != nil || count != len(codes) {
+	if err := s.DB.QueryRowContext(requestContext(c),
+		`SELECT COUNT(*) FROM probes WHERE code IN (`+marks+`)`, args...).Scan(&count); err != nil || count != len(codes) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown probe"})
 		return false, nil, false
 	}
@@ -106,13 +108,13 @@ func (s *Server) parseProbeFilter(c *gin.Context) (all bool, codes []string, ok 
 }
 
 func (s *Server) hostGridRows(c *gin.Context, protocol string, allProbes bool, codes []string, interval rollup.Interval) ([]models.GridRow, error) {
-	metadata, err := s.Pool.Query(requestContext(c), `
+	metadata, err := s.DB.QueryContext(requestContext(c), `
 		SELECT e.id, e.name, e.host, COALESCE(e.logo_icon, ''), COALESCE(p.code, '')
 		FROM endpoints e
 		LEFT JOIN probes p ON p.id = e.probe_id
 		WHERE e.active
-		  AND (($1 = 'http' AND e.http_enabled) OR ($1 = 'icmp' AND e.icmp_enabled))
-		ORDER BY lower(e.name), e.id`, protocol)
+		  AND ((? = 'http' AND e.http_enabled) OR (? = 'icmp' AND e.icmp_enabled))
+		ORDER BY lower(e.name), e.id`, protocol, protocol)
 	if err != nil {
 		return nil, err
 	}
@@ -126,16 +128,22 @@ func (s *Server) hostGridRows(c *gin.Context, protocol string, allProbes bool, c
 		gridRows = append(gridRows, row)
 	}
 
+	probeFilter := "1 = 1"
+	args := []any{protocol, interval.Start(time.Now()).Unix()}
+	if !allProbes {
+		marks, codeArgs := db.InClause(codes)
+		probeFilter = "agent_probe.code IN (" + marks + ")"
+		args = append(args, codeArgs...)
+	}
 	base := `
-		SELECT s.endpoint_id AS row_id, date_trunc('minute', s.observed_at) AS bucket,
-		       avg(s.latency_ms) FILTER (WHERE s.ok) AS latency_ms, bool_or(s.ok) AS ok
+		SELECT s.endpoint_id AS row_id, ` + truncateExpr("s.observed_at", "minute") + ` AS bucket,
+		       avg(CASE WHEN s.ok THEN s.latency_ms END) AS latency_ms, MAX(s.ok) AS ok
 		FROM samples s
 		JOIN agents a ON a.id = s.agent_id
 		JOIN probes agent_probe ON agent_probe.id = a.probe_id
-		WHERE s.protocol = $1 AND s.observed_at >= $2
-		  AND ($3::boolean OR agent_probe.code = ANY($4))
-		GROUP BY s.endpoint_id, date_trunc('minute', s.observed_at)`
-	aggregates, err := s.queryAggregates(c, interval, base, protocol, interval.Start(time.Now()), allProbes, codes)
+		WHERE s.protocol = ? AND s.observed_at >= ? AND ` + probeFilter + `
+		GROUP BY 1, 2`
+	aggregates, err := s.queryAggregates(c, interval, base, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +152,7 @@ func (s *Server) hostGridRows(c *gin.Context, protocol string, allProbes bool, c
 }
 
 func (s *Server) probeGridRows(c *gin.Context, protocol string, interval rollup.Interval) ([]models.GridRow, error) {
-	metadata, err := s.Pool.Query(requestContext(c),
+	metadata, err := s.DB.QueryContext(requestContext(c),
 		`SELECT id, name, flag_icon, code FROM probes ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -159,13 +167,13 @@ func (s *Server) probeGridRows(c *gin.Context, protocol string, interval rollup.
 		gridRows = append(gridRows, row)
 	}
 	base := `
-		SELECT a.probe_id AS row_id, date_trunc('minute', s.observed_at) AS bucket,
-		       avg(s.latency_ms) FILTER (WHERE s.ok) AS latency_ms, bool_or(s.ok) AS ok
+		SELECT a.probe_id AS row_id, ` + truncateExpr("s.observed_at", "minute") + ` AS bucket,
+		       avg(CASE WHEN s.ok THEN s.latency_ms END) AS latency_ms, MAX(s.ok) AS ok
 		FROM samples s
 		JOIN agents a ON a.id = s.agent_id
-		WHERE s.protocol = $1 AND s.observed_at >= $2
-		GROUP BY a.probe_id, date_trunc('minute', s.observed_at)`
-	aggregates, err := s.queryAggregates(c, interval, base, protocol, interval.Start(time.Now()))
+		WHERE s.protocol = ? AND s.observed_at >= ?
+		GROUP BY 1, 2`
+	aggregates, err := s.queryAggregates(c, interval, base, protocol, interval.Start(time.Now()).Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +183,7 @@ func (s *Server) probeGridRows(c *gin.Context, protocol string, interval rollup.
 
 func (s *Server) queryAggregates(c *gin.Context, interval rollup.Interval, base string, args ...any) ([]aggregate, error) {
 	query := rollupQuery(base, interval.Unit)
-	rows, err := s.Pool.Query(requestContext(c), query, args...)
+	rows, err := s.DB.QueryContext(requestContext(c), query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +194,6 @@ func (s *Server) queryAggregates(c *gin.Context, interval rollup.Interval, base 
 		if err := rows.Scan(&value.RowID, &value.Bucket, &value.LatencyMS, &value.OK); err != nil {
 			return nil, err
 		}
-		value.Bucket = value.Bucket.UTC()
 		result = append(result, value)
 	}
 	return result, rows.Err()
@@ -201,16 +208,24 @@ func rollupQuery(base, unit string) string {
 		}
 		name := next + "_data"
 		query += fmt.Sprintf(`, %s AS (
-			SELECT row_id, date_trunc('%s', bucket) AS bucket,
-			       avg(latency_ms) FILTER (WHERE ok) AS latency_ms, bool_or(ok) AS ok
-			FROM %s GROUP BY row_id, date_trunc('%s', bucket)
-		)`, name, next, source, next)
+			SELECT row_id, %s AS bucket, avg(latency_ms) AS latency_ms, MAX(ok) AS ok
+			FROM %s GROUP BY 1, 2
+		)`, name, truncateExpr("bucket", next), source)
 		source = name
 		if unit == next {
 			break
 		}
 	}
 	return query + " SELECT row_id, bucket, latency_ms, ok FROM " + source + " ORDER BY row_id, bucket"
+}
+
+// truncateExpr floors a unix-seconds column to the start of unit (UTC), SQLite-side.
+func truncateExpr(column, unit string) string {
+	if unit == "month" {
+		return fmt.Sprintf("CAST(strftime('%%s', %s, 'unixepoch', 'start of month') AS INTEGER)", column)
+	}
+	seconds := map[string]int{"minute": 60, "hour": 3600, "day": 86400}[unit]
+	return fmt.Sprintf("%[1]s - %[1]s %% %[2]d", column, seconds)
 }
 
 func fillCells(rows []models.GridRow, interval rollup.Interval, values []aggregate) {
@@ -226,7 +241,7 @@ func fillCells(rows []models.GridRow, interval rollup.Interval, values []aggrega
 	}
 	for _, value := range values {
 		rowPosition, rowFound := rowIndex[value.RowID]
-		cellPosition, bucketFound := index[value.Bucket.Unix()]
+		cellPosition, bucketFound := index[value.Bucket]
 		if rowFound && bucketFound {
 			rows[rowPosition].Cells[cellPosition] = &models.GridCell{LatencyMS: value.LatencyMS, OK: value.OK}
 		}

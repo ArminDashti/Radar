@@ -1,9 +1,0 @@
-stack_name: radar
-image_tag: radar-agent:latest
-compose_file: ../../docker-compose.yml
-dockerfile: ../../dockerfile
-docker_network: radar-agent-net
-internal_port: ""
-publish_port: ""
-delete_volume: "no"  # update: keep volumes
-delete_image: "yes"

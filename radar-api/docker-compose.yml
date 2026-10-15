@@ -1,45 +1,24 @@
 name: radar
 
 services:
-  radar-pgsql:
-    image: postgres:16-alpine
-    container_name: radar-pgsql
-    environment:
-      POSTGRES_USER: radar
-      POSTGRES_PASSWORD: radar
-      POSTGRES_DB: radar
-    volumes:
-      - radar-pgsql-vol:/var/lib/postgresql/data
-    expose:
-      - "5432"
-    networks:
-      - t3-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: "no"
-
   radar-api:
     image: ${IMAGE_TAG:-radar-api:latest}
     container_name: radar-api
     expose:
       - "${INTERNAL_PORT:-8088}"
+    ports:
+      - "${RADAR_PORT:-8088}:${INTERNAL_PORT:-8088}"
     environment:
       PORT: "${INTERNAL_PORT:-8088}"
       JWT_SECRET: ${JWT_SECRET:-change-me-radar-jwt}
-      DATABASE_URL: postgres://radar:radar@radar-pgsql:5432/radar?sslmode=disable
+      DATABASE_PATH: /data/radar.db
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,https://radar.xaigrok.ir}
       LOGO_DIR: /data/logos
       GIN_MODE: release
     volumes:
-      - radar-logos-vol:/data/logos
+      - radar-sqlite-vol:/data
     networks:
       - t3-net
-    depends_on:
-      radar-pgsql:
-        condition: service_healthy
     restart: "no"
 
 networks:
@@ -48,7 +27,5 @@ networks:
     external: true
 
 volumes:
-  radar-pgsql-vol:
-    name: radar-pgsql-vol
-  radar-logos-vol:
-    name: radar-logos-vol
+  radar-sqlite-vol:
+    name: radar-sqlite-vol
