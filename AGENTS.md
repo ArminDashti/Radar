@@ -122,3 +122,20 @@ unverified) or skip it. This keeps confident guesses out.
 <!-- When no richer mechanism is available, append dated golden-path entries here.
      Format: ### YYYY-MM-DD — <title>  /  **Goal**, **Steps**, **Gotchas**,
      **What didn't work**. Keep secrets out — point to where they live. -->
+
+## Learned User Preferences
+
+- Expose the local stack (API and WebUI) under one `radar` alias; every `radar <command>` acts on both.
+- Name the lifecycle command `rebuild` (not `reinstall`); `rebuild --remove-data=yes -y` wipes data.
+- Docker Compose stack name is `radar` (lowercase; `Radar` is rejected); containers are `radar-api` and `radar-webui`.
+- Keep the CLI command set exactly as the user lists it; drop or rename commands only when asked.
+
+## Learned Workspace Facts
+
+- The `radar` CLI lives in `radar-cli/` (`radar.ps1` plus `radar.cmd` shim); that folder is on the user PATH.
+- The CLI drives `radar-api/docker-compose.local.yml` (project `radar`: api, agent, webui).
+- The local stack needs the external Docker network `pc-armin-local`; create it once with `docker network create`.
+- URLs: WebUI `http://localhost:5184/radar/` (`RADAR_WEBUI_PORT`, default 5184); API `http://localhost:8088/api/probes`.
+- CLI state lives in `%LOCALAPPDATA%\radar\` (`config.json`, `logs\radar.log`).
+- WebUI runs `npm install` on each container start and the API compiles `air` on first start, so cold readiness takes minutes (CLI waits 300s).
+- Secrets (JWT secret, agent token) are inline in `radar-api/docker-compose.local.yml`; never copy their values into docs or chat.

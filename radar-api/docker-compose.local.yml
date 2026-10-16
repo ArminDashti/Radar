@@ -67,7 +67,7 @@ services:
       - ../radar-webui:/app
       - radar-webui-node-modules:/app/node_modules
     ports:
-      - "5184:5173"
+      - "${RADAR_WEBUI_PORT:-5184}:5173"
     networks:
       - default
       - pc-armin-local
