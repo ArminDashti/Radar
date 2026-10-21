@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ChevronDown } from '@lucide/vue'
 import { assetUrl, type GridResponse } from '@/lib/api'
 import { bucketCapacity, type Interval } from '@/lib/latency'
+import {
+  formatCurrentLatency,
+  formatUptimePercent,
+  rowCurrentLatencyMs,
+  rowUptimePercent,
+} from '@/lib/rowStats'
 import { useSquareSize } from '@/lib/squareSize'
 import LatencySquare from './LatencySquare.vue'
 
@@ -11,7 +18,22 @@ const props = defineProps<{
   loading?: boolean
   error?: string
   boxedRows?: boolean
+  showMetrics?: boolean
+  modernRows?: boolean
 }>()
+
+const expandedRowIds = ref<Set<number>>(new Set())
+
+function toggleRow(id: number) {
+  const next = new Set(expandedRowIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedRowIds.value = next
+}
+
+function isExpanded(id: number) {
+  return expandedRowIds.value.has(id)
+}
 
 const emit = defineEmits<{
   capacity: [count: number]
@@ -42,7 +64,8 @@ const squareStartGapPx = computed(() => squareStartMultiplier * appliedSquareSiz
 
 const gridColumns = computed(() => {
   const label = Math.max(Math.ceil(measuredLabelPx.value), 0)
-  return `1.25rem ${label}px ${squareStartGapPx.value}px minmax(0, 1fr)`
+  const metrics = props.showMetrics ? ' 4.25rem 4.25rem 2rem' : ''
+  return `1.25rem ${label}px ${squareStartGapPx.value}px minmax(0, 1fr)${metrics}`
 })
 
 function hostHref(host: string | undefined): string {
@@ -137,40 +160,140 @@ onBeforeUnmount(() => {
     <div v-else-if="error && !data" class="grid h-full place-items-center p-6 text-sm text-red-500">{{ error }}</div>
     <div v-else-if="!data?.rows.length" class="grid h-full place-items-center text-sm text-muted-foreground">No rows available.</div>
 
-    <div v-else-if="boxedRows" class="flex flex-col gap-2 p-2">
+    <div v-else-if="boxedRows && modernRows" class="flex flex-col gap-3 p-4">
       <div
         v-for="(row, rowIndex) in data.rows"
         :key="row.id"
-        class="grid items-center gap-x-2 rounded-md border border-border/70 bg-card/40 px-2 py-1.5"
-        :style="{ gridTemplateColumns: gridColumns }"
+        class="group overflow-hidden rounded-xl border border-white/5 bg-slate-900/40 transition-all hover:border-white/15"
       >
-        <div class="h-5 w-5 shrink-0">
-          <img v-if="row.flag_icon" :src="assetUrl(row.flag_icon)" alt="" class="h-5 w-5 object-contain" />
+        <div class="flex items-center justify-between gap-4 p-3">
+        <div class="flex w-48 shrink-0 items-center gap-3">
+          <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-slate-800 text-slate-300 transition-all group-hover:border-indigo-500/50 group-hover:text-white">
+            <img v-if="row.flag_icon" :src="assetUrl(row.flag_icon)" alt="" class="h-5 w-5 object-contain" />
+          </div>
+          <div class="min-w-0 truncate">
+            <div class="truncate text-sm font-semibold text-slate-100 group-hover:text-indigo-300">
+              <a
+                v-if="hostHref(row.host)"
+                :href="hostHref(row.host)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline-offset-2 hover:underline"
+              >{{ row.name }}</a>
+              <span v-else>{{ row.name }}</span>
+            </div>
+            <span class="text-[11px] font-mono text-slate-400 group-hover:text-slate-300">
+              {{ formatCurrentLatency(rowCurrentLatencyMs(row.cells)) }} • {{ formatUptimePercent(rowUptimePercent(row.cells)) }}
+            </span>
+          </div>
         </div>
-        <div class="min-w-0 truncate text-sm font-medium" :title="row.name">
-          <a
-            v-if="hostHref(row.host)"
-            :href="hostHref(row.host)"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="block truncate text-foreground underline-offset-2 hover:underline"
-          >{{ row.name }}</a>
-          <span v-else class="block truncate">{{ row.name }}</span>
+        <div class="flex min-w-0 flex-1 items-center justify-end overflow-hidden">
+          <div
+            :ref="rowIndex === 0 ? bindFirstStrip : undefined"
+            class="flex max-w-full flex-nowrap content-start justify-end py-1"
+            :class="stripOverflows ? 'overflow-x-auto' : 'overflow-x-hidden'"
+            :style="{ gap: `${gapPx}px` }"
+          >
+            <LatencySquare
+              v-for="(bucket, index) in data.buckets"
+              :key="bucket"
+              :cell="row.cells[index] ?? null"
+              :bucket="bucket"
+              :interval="interval"
+              tall
+            />
+          </div>
+          <button
+            v-if="showMetrics"
+            type="button"
+            class="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+            :aria-expanded="isExpanded(row.id)"
+            :aria-label="isExpanded(row.id) ? 'Collapse details' : 'Expand details'"
+            @click="toggleRow(row.id)"
+          >
+            <ChevronDown class="h-4 w-4 transition-transform" :class="isExpanded(row.id) ? 'rotate-180' : ''" />
+          </button>
         </div>
-        <div aria-hidden="true" />
+        </div>
         <div
-          :ref="rowIndex === 0 ? bindFirstStrip : undefined"
-          class="flex w-full min-w-0 flex-nowrap content-start justify-start"
-          :class="stripOverflows ? 'overflow-x-auto' : 'overflow-x-hidden'"
-          :style="{ gap: `${gapPx}px` }"
+          v-if="showMetrics && isExpanded(row.id)"
+          class="border-t border-white/10 px-4 py-2 text-xs text-slate-400"
         >
-          <LatencySquare
-            v-for="(bucket, index) in data.buckets"
-            :key="bucket"
-            :cell="row.cells[index] ?? null"
-            :bucket="bucket"
-            :interval="interval"
-          />
+          <dl class="flex flex-wrap gap-x-6 gap-y-1">
+            <div v-if="row.host"><dt class="inline font-medium text-slate-200">Host </dt><dd class="inline">{{ row.host }}</dd></div>
+            <div v-if="row.probe_code"><dt class="inline font-medium text-slate-200">Probe </dt><dd class="inline">{{ row.probe_code }}</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="boxedRows" class="flex flex-col gap-1.5 p-3 pt-2">
+      <div
+        v-for="(row, rowIndex) in data.rows"
+        :key="row.id"
+        class="overflow-hidden rounded-xl border border-border/50 bg-muted/20 transition-colors hover:border-border/80"
+      >
+        <div
+          class="grid items-center gap-x-2 px-3 py-2"
+          :style="{ gridTemplateColumns: gridColumns }"
+        >
+          <div class="h-6 w-6 shrink-0">
+            <img v-if="row.flag_icon" :src="assetUrl(row.flag_icon)" alt="" class="h-6 w-6 object-contain" />
+          </div>
+          <div class="min-w-0 truncate text-sm font-medium" :title="row.name">
+            <a
+              v-if="hostHref(row.host)"
+              :href="hostHref(row.host)"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="block truncate text-foreground underline-offset-2 hover:underline"
+            >{{ row.name }}</a>
+            <span v-else class="block truncate">{{ row.name }}</span>
+          </div>
+          <div aria-hidden="true" />
+          <div
+            :ref="rowIndex === 0 ? bindFirstStrip : undefined"
+            class="flex w-full min-w-0 flex-nowrap content-start justify-start"
+            :class="stripOverflows ? 'overflow-x-auto' : 'overflow-x-hidden'"
+            :style="{ gap: `${gapPx}px` }"
+          >
+            <LatencySquare
+              v-for="(bucket, index) in data.buckets"
+              :key="bucket"
+              :cell="row.cells[index] ?? null"
+              :bucket="bucket"
+              :interval="interval"
+            />
+          </div>
+          <template v-if="showMetrics">
+            <div class="text-right text-sm font-medium tabular-nums text-green-500">
+              {{ formatUptimePercent(rowUptimePercent(row.cells)) }}
+            </div>
+            <div class="text-right text-sm tabular-nums text-foreground">
+              {{ formatCurrentLatency(rowCurrentLatencyMs(row.cells)) }}
+            </div>
+            <button
+              type="button"
+              class="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              :aria-expanded="isExpanded(row.id)"
+              :aria-label="isExpanded(row.id) ? 'Collapse details' : 'Expand details'"
+              @click="toggleRow(row.id)"
+            >
+              <ChevronDown
+                class="h-4 w-4 transition-transform"
+                :class="isExpanded(row.id) ? 'rotate-180' : ''"
+              />
+            </button>
+          </template>
+        </div>
+        <div
+          v-if="showMetrics && isExpanded(row.id)"
+          class="border-t border-border/40 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <dl class="flex flex-wrap gap-x-6 gap-y-1">
+            <div v-if="row.host"><dt class="inline font-medium text-foreground/80">Host </dt><dd class="inline">{{ row.host }}</dd></div>
+            <div v-if="row.probe_code"><dt class="inline font-medium text-foreground/80">Probe </dt><dd class="inline">{{ row.probe_code }}</dd></div>
+          </dl>
         </div>
       </div>
     </div>

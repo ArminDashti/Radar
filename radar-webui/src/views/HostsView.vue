@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import DashboardKpis from '@/components/DashboardKpis.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import LatencyGrid from '@/components/LatencyGrid.vue'
+import LatencyLegend from '@/components/LatencyLegend.vue'
 import { api, getHostPrefs, putHostPrefs, type GridResponse, type Probe } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
+import { visibleHostCount } from '@/lib/hostCount'
 import type { Interval, Protocol } from '@/lib/latency'
 
 const interval = ref<Interval>('minutes')
@@ -19,6 +22,7 @@ const data = ref<GridResponse | null>(null)
 const bucketWindow = ref(0)
 const loading = ref(false)
 const error = ref('')
+const hostSearch = ref('')
 let timer: ReturnType<typeof setInterval> | undefined
 let prefsTimer: ReturnType<typeof setTimeout> | undefined
 let skipNextPrefsSave = false
@@ -33,7 +37,14 @@ const hostOptions = computed(() =>
 const visibleData = computed<GridResponse | null>(() => {
   if (!data.value) return null
   const selected = new Set(selectedHosts.value)
-  return { ...data.value, rows: data.value.rows.filter((row) => selected.has(String(row.id))) }
+  const q = hostSearch.value.trim().toLowerCase()
+  const rows = data.value.rows.filter((row) => {
+    if (!selected.has(String(row.id))) return false
+    if (!q) return true
+    const host = row.host?.toLowerCase() ?? ''
+    return row.name.toLowerCase().includes(q) || host.includes(q)
+  })
+  return { ...data.value, rows }
 })
 
 function probeQuery() {
@@ -85,6 +96,7 @@ async function load() {
     const next = await api<GridResponse>(gridUrl())
     if (generation !== loadGeneration) return
     data.value = next
+    visibleHostCount.value = next.rows.length
     const ids = next.rows.map((row) => String(row.id))
     const idSet = new Set(ids)
     if (!hostsInitialized.value) {
@@ -139,29 +151,38 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   clearInterval(timer)
   clearTimeout(prefsTimer)
+  visibleHostCount.value = null
 })
 </script>
 
 <template>
-  <section class="flex min-h-0 flex-1 flex-col">
+  <div class="flex min-h-[calc(100dvh-12rem)] flex-col gap-6">
+    <DashboardKpis :data="visibleData" :probe-count="probes.length" />
     <FilterBar
       v-model:interval="interval"
       v-model:protocol="protocol"
       v-model:selected-probes="selectedProbes"
       v-model:selected-hosts="selectedHosts"
+      v-model:host-search="hostSearch"
       :probes="probes"
       :host-options="hostOptions"
       show-probe
       show-hosts
+      show-host-search
     />
-    <div v-if="error && data" class="border-b bg-red-500/10 px-4 py-2 text-sm text-red-500">{{ error }}</div>
-    <LatencyGrid
-      :data="visibleData"
-      :interval="interval"
-      :loading="loading"
-      :error="error"
-      boxed-rows
-      @capacity="onCapacity"
-    />
-  </section>
+    <LatencyLegend />
+    <div v-if="error && data" class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400">{{ error }}</div>
+    <section class="glass-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10 shadow-2xl shadow-black/40">
+      <LatencyGrid
+        :data="visibleData"
+        :interval="interval"
+        :loading="loading"
+        :error="error"
+        boxed-rows
+        show-metrics
+        modern-rows
+        @capacity="onCapacity"
+      />
+    </section>
+  </div>
 </template>

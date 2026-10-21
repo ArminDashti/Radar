@@ -6,7 +6,7 @@
 .EXAMPLE
   radar run
   radar port --port=5190
-  radar rebuild --remove-data=yes -y
+  radar reinstall -y
 #>
 param(
     [Parameter(Position = 0)][string]$Command = 'help',
@@ -49,8 +49,8 @@ USAGE:
   radar stop                         Stop the stack (keeps containers and data)
   radar port [--port=N]              Show saved WebUI port, or save N (applies if running)
   radar update                       git pull --ff-only in each repo, then rebuild keeping data
-  radar rebuild [--remove-data=no|yes] [-y]
-                                     Refresh images and recreate containers; 'yes' wipes all volumes and config
+  radar rebuild                      Recreate containers with latest code; keeps data and caches (no re-downloads)
+  radar reinstall [-y]               Delete containers, images, all data and config, then install from scratch
   radar uninstall [-y]               Remove containers, volumes (all data), config and PATH entry
   radar help                         Show this help
 "@ -ForegroundColor Cyan
@@ -238,31 +238,32 @@ function Set-PortCommand {
     }
 }
 
-function Invoke-Rebuild([string]$RemoveData) {
+function Invoke-Rebuild {
+    # Recreate containers with the latest code; keep volumes (data, Go module and npm caches) so nothing cached is downloaded again.
     Assert-Docker
     Assert-Network
-    $wasRunning = Test-Running
-    if ($RemoveData -eq 'yes') {
-        Confirm-Destructive "This deletes ALL volumes of the stack (radar-sqlite-data, radar-logos-data, module caches) and $DataRoot."
-        Write-Step 'Removing stack, volumes and config'
-        Invoke-Compose down -v --remove-orphans
-        Remove-Item -Recurse -Force $DataRoot -ErrorAction SilentlyContinue
-        Save-Config $DefaultPort
-    }
-    else {
-        Ensure-Config
-        Write-Step 'Recreating containers (data kept)'
-        Invoke-Compose down --remove-orphans
-    }
-    Write-Step 'Pulling images'
-    Invoke-Compose pull
-    if ($wasRunning) {
-        Start-Stack
-        Wait-Ready (Get-SavedPort)
-    }
+    Ensure-Config
+    Write-Step 'Recreating containers (data and caches kept)'
+    Invoke-Compose down --remove-orphans
+    Invoke-Compose up -d --pull missing --force-recreate
+    Wait-Ready (Get-SavedPort)
     Write-Step 'Rebuild complete'
 }
 
+function Invoke-Reinstall {
+    # Remove containers, images, volumes and config completely, then install from scratch.
+    Assert-Docker
+    Assert-Network
+    Confirm-Destructive "This deletes the stack containers, its images, ALL volumes (data and caches) and $DataRoot, then installs again."
+    Write-Step 'Removing containers, images, volumes and config'
+    Invoke-Compose down -v --rmi all --remove-orphans
+    Remove-Item -Recurse -Force $DataRoot -ErrorAction SilentlyContinue
+    Save-Config $DefaultPort
+    Write-Step 'Installing fresh'
+    Invoke-Compose up -d --pull always --force-recreate
+    Wait-Ready (Get-SavedPort)
+    Write-Step 'Reinstall complete'
+}
 function Update-Radar {
     Assert-Docker
     foreach ($repo in $Repos) {
@@ -271,7 +272,7 @@ function Update-Radar {
         if ($LASTEXITCODE -ne 0) { throw "git pull --ff-only failed in $repo; update aborted:`n$pull" }
         Write-Host $pull
     }
-    Invoke-Rebuild 'no'
+    Invoke-Rebuild
 }
 
 function Uninstall-Radar {
@@ -294,11 +295,9 @@ function Invoke-Radar {
         'port' { Set-PortCommand }
         'update' { Update-Radar }
         'rebuild' {
-            $mode = Get-Flag 'remove-data'
-            if (-not $mode) { $mode = 'no' }
-            if ($mode -notin 'no', 'yes') { throw "--remove-data must be 'no' or 'yes'" }
-            Invoke-Rebuild $mode
+            if ((Get-Flag 'remove-data') -eq 'yes') { Invoke-Reinstall } else { Invoke-Rebuild }
         }
+        'reinstall' { Invoke-Reinstall }
         'uninstall' { Uninstall-Radar }
         default {
             Show-Help

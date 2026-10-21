@@ -28,10 +28,10 @@ export function formatLatencyMs(ms: number): string {
 }
 
 export function latencyColor(latency: number) {
-  if (latency <= 50) return '#22c55e'
+  if (latency <= 50) return '#10b981'
   if (latency <= 100) return '#3b82f6'
-  if (latency <= 200) return '#f8fafc'
-  if (latency <= 500) return '#f97316'
+  if (latency <= 200) return '#06b6d4'
+  if (latency <= 500) return '#f59e0b'
   return '#ef4444'
 }
 
