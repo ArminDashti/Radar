@@ -24,7 +24,7 @@ services:
       - radar-gotmp:/app/tmp
       - radar-sqlite-data:/data
     ports:
-      - "8088:8088"
+      - "${RADAR_API_PUBLISH_PORT:-8088}:8088"
 
   agent:
     image: golang:1.24-alpine
@@ -86,3 +86,4 @@ volumes:
 networks:
   pc-armin-local:
     external: true
+
