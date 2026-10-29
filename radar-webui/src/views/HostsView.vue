@@ -4,9 +4,9 @@ import DashboardKpis from '@/components/DashboardKpis.vue'
 import FilterBar from '@/components/FilterBar.vue'
 import LatencyGrid from '@/components/LatencyGrid.vue'
 import LatencyLegend from '@/components/LatencyLegend.vue'
-import { api, getHostPrefs, putHostPrefs, type GridResponse, type Probe } from '@/lib/api'
-import { isAuthenticated } from '@/lib/auth'
+import { api, type GridResponse, type Probe } from '@/lib/api'
 import { visibleHostCount } from '@/lib/hostCount'
+import { readVisibleHostIds, writeVisibleHostIds } from '@/lib/hostVisibility'
 import type { Interval, Protocol } from '@/lib/latency'
 
 const interval = ref<Interval>('minutes')
@@ -15,7 +15,6 @@ const probes = ref<Probe[]>([])
 const selectedProbes = ref<string[]>([])
 const selectedHosts = ref<string[]>([])
 const hostsInitialized = ref(false)
-const prefsLoaded = ref(false)
 const savedHostIds = ref<string[] | null>(null)
 const seenHostIds = ref(new Set<string>())
 const data = ref<GridResponse | null>(null)
@@ -54,27 +53,15 @@ function probeQuery() {
   return selectedProbes.value.join(',')
 }
 
-async function loadPrefs() {
-  if (!isAuthenticated.value) {
-    prefsLoaded.value = true
-    savedHostIds.value = null
-    return
-  }
-  try {
-    const prefs = await getHostPrefs()
-    savedHostIds.value = prefs.host_ids.map(String)
-  } catch {
-    savedHostIds.value = null
-  } finally {
-    prefsLoaded.value = true
-  }
+function loadPrefs() {
+  savedHostIds.value = readVisibleHostIds()
 }
 
 function schedulePrefsSave() {
-  if (!isAuthenticated.value || !prefsLoaded.value || skipNextPrefsSave) return
+  if (skipNextPrefsSave) return
   clearTimeout(prefsTimer)
   prefsTimer = setTimeout(() => {
-    void putHostPrefs(selectedHosts.value.map(Number).filter((id) => Number.isFinite(id) && id > 0)).catch(() => {})
+    writeVisibleHostIds(selectedHosts.value)
   }, 400)
 }
 
@@ -101,7 +88,7 @@ async function load() {
     const idSet = new Set(ids)
     if (!hostsInitialized.value) {
       skipNextPrefsSave = true
-      if (isAuthenticated.value && savedHostIds.value && savedHostIds.value.length > 0) {
+      if (savedHostIds.value && savedHostIds.value.length > 0) {
         const preferred = savedHostIds.value.filter((id) => idSet.has(id))
         selectedHosts.value = preferred.length > 0 ? preferred : ids
       } else {
@@ -134,16 +121,10 @@ function onCapacity(count: number) {
 
 watch([interval, protocol, selectedProbes], load)
 watch(selectedHosts, schedulePrefsSave, { deep: true })
-watch(isAuthenticated, async () => {
-  hostsInitialized.value = false
-  prefsLoaded.value = false
-  await loadPrefs()
-  await load()
-})
 
 onMounted(async () => {
   probes.value = await api<Probe[]>('/api/probes').catch(() => [])
-  await loadPrefs()
+  loadPrefs()
   selectedProbes.value = probes.value.map((probe) => probe.code)
   if (!selectedProbes.value.length) await load()
   timer = setInterval(load, 10_000)

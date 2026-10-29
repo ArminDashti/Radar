@@ -5,7 +5,7 @@
 | Path | Purpose | Auth required? |
 |---|---|---|
 | `/` | Redirect to host grid | No after redirect |
-| `/hosts` | Host latency grid | No |
+| `/hosts` | Host latency grid; hide/show hosts persisted in browser (`localStorage` `radar-visible-host-ids`) | No |
 | `/endpoints` | Redirect to `/hosts` | No after redirect |
 | `/probes` | Probe latency grid | Yes |
 | `/request-host` | Submit host add requests | Yes |
@@ -23,8 +23,8 @@
 |---|---|---|---|
 | POST | `/api/auth/login` | Exchange credentials for JWT | No |
 | POST | `/api/auth/signup` | Create account (role `user`) | No |
-| GET | `/api/me/host-prefs` | Load saved host visibility | Yes |
-| PUT | `/api/me/host-prefs` | Save host visibility | Yes |
+| GET | `/api/me/host-prefs` | Legacy server host visibility (dashboard uses browser storage) | Yes |
+| PUT | `/api/me/host-prefs` | Legacy server host visibility (dashboard uses browser storage) | Yes |
 | GET | `/api/host-requests` | List host requests | Yes |
 | POST | `/api/host-requests` | Submit host request | Yes |
 | POST | `/api/host-requests/:id/approve` | Approve request | Yes (admin) |
