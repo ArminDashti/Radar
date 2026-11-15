@@ -139,3 +139,11 @@ unverified) or skip it. This keeps confident guesses out.
 - CLI state lives in `%LOCALAPPDATA%\radar\` (`config.json`, `logs\radar.log`).
 - WebUI runs `npm install` on each container start and the API compiles `air` on first start, so cold readiness takes minutes (CLI waits 300s).
 - Secrets (JWT secret, agent token) are inline in `radar-api/docker-compose.local.yml`; never copy their values into docs or chat.
+
+## Git workflow (required)
+
+After any change, always:
+1. Commit the change on a new branch and push it to GitHub (`origin`).
+2. Create a pull request for it.
+3. Merge the pull request into the `main` branch.
+4. Make sure everything is committed and pushed to GitHub, and that local `main` is pulled and in sync with `origin/main`.
